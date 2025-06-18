@@ -15,3 +15,7 @@ share/
 
 # env
 .env
+
+
+# pyvenv.cfg
+pyvenv.cfg
