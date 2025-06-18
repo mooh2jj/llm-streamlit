@@ -1,0 +1,17 @@
+# chroma
+chroma_db
+
+#etc
+etc/
+
+# Lib
+Lib/
+
+# Scripts
+Scripts/
+
+#share
+share/
+
+# env
+.env
