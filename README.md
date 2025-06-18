@@ -2,6 +2,9 @@
 
 세무 관련 PDF 문서를 기반으로 질문에 답변하는 RAG(Retrieval-Augmented Generation) 시스템입니다.
 
+![image](https://github.com/user-attachments/assets/d0cb8e0b-aa98-40ca-b8b2-ddf80f54e4dc)
+
+
 ## 주요 기능
 
 - 📚 PDF 문서 자동 임베딩 (ChromaDB 사용)
