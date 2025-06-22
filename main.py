@@ -1,11 +1,11 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-from langchain.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma  # 수정
+from langchain_openai import ChatOpenAI  # 수정
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
@@ -46,10 +46,15 @@ def initialize_rag_system():
         splits = text_splitter.split_documents(documents)
         
         # 임베딩 모델 설정 (한국어 지원)
-        embeddings = HuggingFaceEmbeddings(
-            model_name="jhgan/ko-sbert-multitask"
-        )
+        embeddings_model = OpenAIEmbeddings()
+
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
         
+        # 기존 ChromaDB 디렉토리가 있으면 삭제 (차원 불일치 해결)
+        import shutil
+        if os.path.exists("./chroma_db"):
+            shutil.rmtree("./chroma_db")
+
         # ChromaDB 벡터 저장소 생성
         vectorstore = Chroma.from_documents(
             documents=splits,

@@ -1,21 +1,13 @@
 # chroma
 chroma_db
 
-#etc
-etc/
-
-# Lib
-Lib/
-
-# Scripts
-Scripts/
-
-#share
-share/
-
 # env
 .env
 
-
-# pyvenv.cfg
+# python venv
+etc/
+Include/
+Lib/
+Scripts/
+share/
 pyvenv.cfg
