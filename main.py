@@ -1,3 +1,17 @@
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+    print("<<<<< sqlite3 patched with pysqlite3 >>>>>")
+except ImportError:
+    # pysqlite3가 없으면 기본 sqlite3 사용
+    print("<<<<< using default sqlite3 >>>>>")
+
+print("<<<<< app.app.py IS BEING LOADED (sqlite3 patched with pysqlite3) >>>>>") # 패치 내용 명시
+
+
+
+
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -105,8 +119,8 @@ def get_rag_response(question, vectorstore, api_key):
         )
         
         # 질의응답 실행
-        response = qa_chain.run(question)
-        return response
+        response = qa_chain.invoke({"query": question})
+        return response["result"]
         
     except Exception as e:
         return f"답변 생성 중 오류가 발생했습니다: {str(e)}"
