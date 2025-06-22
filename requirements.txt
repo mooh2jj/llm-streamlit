@@ -2,8 +2,6 @@ streamlit
 langchain
 langchain-community
 langchain-openai
-chromadb
-pypdf
 sentence-transformers
 openai 
 python-dotenv
