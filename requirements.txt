@@ -1,6 +1,8 @@
 streamlit
 langchain
 langchain-community
+chromadb
+protobuf==3.20.3
 langchain-openai
 sentence-transformers
 openai 
