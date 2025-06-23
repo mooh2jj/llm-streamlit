@@ -3,7 +3,7 @@ langchain
 langchain-community
 chromadb
 tiktoken
-# pysqlite3-binary
+pysqlite3-binary; sys_platform == "linux"
 pypdf
 langchain-openai
 sentence-transformers
