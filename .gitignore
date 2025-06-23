@@ -11,3 +11,7 @@ Lib/
 Scripts/
 share/
 pyvenv.cfg
+
+
+# pdf
+tax.pdf
