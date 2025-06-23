@@ -1,3 +1,7 @@
+import os
+# protobuf 호환성을 위한 환경변수 설정 (다른 모든 import보다 먼저!)
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 try:
     __import__('pysqlite3')
     import sys
@@ -10,7 +14,6 @@ except ImportError:
 print("<<<<< app.app.py IS BEING LOADED (sqlite3 patched with pysqlite3) >>>>>") # 패치 내용 명시
 
 import streamlit as st
-import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter

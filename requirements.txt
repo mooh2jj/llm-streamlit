@@ -9,3 +9,4 @@ langchain-openai
 sentence-transformers
 openai 
 python-dotenv
+protobuf==3.20.3
