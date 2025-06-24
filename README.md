@@ -2,7 +2,8 @@
 
 세무 관련 PDF 문서를 기반으로 질문에 답변하는 RAG(Retrieval-Augmented Generation) 시스템입니다.
 
-![image](https://github.com/user-attachments/assets/d0cb8e0b-aa98-40ca-b8b2-ddf80f54e4dc)
+![image](https://github.com/user-attachments/assets/bd2f15ec-a198-4f2b-b456-9f2bd42c4fb1)
+
 
 
 ## 주요 기능
@@ -28,15 +29,14 @@ pip install -r requirements.txt
 ### 3. 앱 실행
 
 ```bash
-streamlit run test.py
+streamlit run main.py
 ```
 
 ## 사용법
 
-1. 앱이 시작되면 자동으로 `tax.pdf` 파일을 임베딩합니다
-2. 사이드바에서 OpenAI API 키를 입력합니다
-3. 채팅창에서 세무 관련 질문을 입력합니다
-4. AI가 PDF 문서 내용을 바탕으로 답변합니다
+1. 앱이 시작되면 사이드바에서 PDF 파일을 업로드해줍니다.
+2. 채팅창에서 업로드한 PDF 파일 관련 질문을 입력합니다
+3. AI가 업로드한 PDF 문서 내용을 바탕으로 답변합니다
 
 ## 기술 스택
 
