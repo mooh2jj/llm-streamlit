@@ -27,6 +27,8 @@ from langchain.callbacks.base import BaseCallbackHandler
 from langchain.schema import LLMResult
 from typing import Dict, List, Any
 import time
+import uuid
+import subprocess
 
 from streamlit_extras.buy_me_a_coffee import button
 
@@ -81,7 +83,125 @@ with st.sidebar:
         st.success(f"✅ 파일 업로드됨: {uploaded_file.name}")
         st.info(f"📄 파일 크기: {uploaded_file.size / 1024:.1f} KB")
 
-# RAG 시스템 초기화
+# 안전한 ChromaDB 삭제 함수 (개선된 버전)
+def safe_delete_chromadb(max_retries=3, delay=1):
+    """ChromaDB 폴더를 안전하게 삭제합니다."""
+    import shutil
+    import time
+    import gc
+    
+    # 먼저 vectorstore 객체 해제 및 가비지 컬렉션 강제 실행
+    if 'vectorstore' in st.session_state:
+        st.session_state.vectorstore = None
+    gc.collect()  # 가비지 컬렉션 강제 실행
+    
+    chroma_dir = "./chroma_db"
+    if not os.path.exists(chroma_dir):
+        return True
+    
+    # 먼저 이름 변경 시도 (Windows에서 더 안전함)
+    temp_name = f"./chroma_db_deleted_{uuid.uuid4().hex[:8]}"
+    
+    try:
+        # 폴더 이름 변경 (일반적으로 삭제보다 빠름)
+        os.rename(chroma_dir, temp_name)
+        print(f"ChromaDB 디렉토리 이름 변경: {chroma_dir} -> {temp_name}")
+        
+        # 이름 변경 후 삭제 시도
+        for attempt in range(max_retries):
+            try:
+                time.sleep(delay)
+                shutil.rmtree(temp_name)
+                print(f"ChromaDB 디렉토리 삭제 성공: {temp_name}")
+                return True
+            except Exception as e:
+                print(f"삭제 시도 {attempt + 1}/{max_retries} 실패: {str(e)}")
+                if attempt < max_retries - 1:
+                    delay *= 2
+        
+        # 삭제 실패 시 나중에 정리하도록 남겨둠
+        print(f"ChromaDB 디렉토리 삭제 실패, 나중에 정리됨: {temp_name}")
+        return True  # 이름 변경은 성공했으므로 True 반환
+        
+    except Exception as e:
+        print(f"ChromaDB 디렉토리 이름 변경 실패: {str(e)}")
+        return False
+
+# ChromaDB 정리 함수 (개선된 버전)
+def cleanup_chromadb():
+    """기존 ChromaDB 폴더들을 정리합니다."""
+    import glob
+    import shutil
+    import time
+    
+    # 모든 ChromaDB 관련 폴더 찾기 (삭제 예정 폴더 포함)
+    chroma_dirs = glob.glob("./chroma_db*")
+    
+    for dir_path in chroma_dirs:
+        try:
+            # 약간의 지연 후 삭제
+            time.sleep(0.5)
+            shutil.rmtree(dir_path)
+            print(f"정리됨: {dir_path}")
+        except Exception as e:
+            print(f"정리 중 오류 ({dir_path}): {str(e)}")
+            # 삭제 실패한 폴더는 다음에 다시 시도
+
+# 강제 ChromaDB 정리 함수 (Windows 전용)
+def force_cleanup_chromadb():
+    """Windows에서 ChromaDB를 강제로 정리합니다."""
+    import subprocess
+    import glob
+    import time
+    
+    chroma_dirs = glob.glob("./chroma_db*")
+    
+    for dir_path in chroma_dirs:
+        try:
+            # Windows의 경우 핸들을 가진 프로세스 확인 및 정리 시도
+            if os.name == 'nt':  # Windows
+                try:
+                    # robocopy를 사용한 빈 폴더로 덮어쓰기 (Windows 전용 트릭)
+                    empty_dir = "./temp_empty_dir"
+                    os.makedirs(empty_dir, exist_ok=True)
+                    
+                    # robocopy로 빈 폴더 내용을 대상 폴더에 미러링 (효과적으로 삭제)
+                    subprocess.run([
+                        "robocopy", empty_dir, dir_path, "/MIR", "/NFL", "/NDL", "/NJH", "/NJS"
+                    ], capture_output=True, check=False)
+                    
+                    # 빈 폴더들 삭제
+                    os.rmdir(empty_dir)
+                    os.rmdir(dir_path)
+                    print(f"강제 정리 성공: {dir_path}")
+                    
+                except Exception as e:
+                    print(f"강제 정리 실패 ({dir_path}): {str(e)}")
+            else:
+                # Unix 계열 시스템에서는 일반 삭제
+                import shutil
+                shutil.rmtree(dir_path)
+                print(f"정리됨: {dir_path}")
+                
+        except Exception as e:
+            print(f"정리 중 오류 ({dir_path}): {str(e)}")
+
+# 앱 시작 시 ChromaDB 정리 (세션 상태 초기화 전에)
+if 'app_initialized' not in st.session_state:
+    # 일반 정리 시도
+    cleanup_chromadb()
+    
+    # Windows에서 여전히 남아있는 폴더가 있다면 강제 정리 시도
+    if os.name == 'nt':  # Windows
+        import glob
+        remaining_dirs = glob.glob("./chroma_db*")
+        if remaining_dirs:
+            print("Windows에서 강제 정리 시도...")
+            force_cleanup_chromadb()
+    
+    st.session_state.app_initialized = True
+
+# RAG 시스템 초기화 (더욱 개선된 버전)
 @st.cache_resource
 def initialize_rag_system(file_path):
     """RAG 시스템을 초기화합니다."""
@@ -100,16 +220,29 @@ def initialize_rag_system(file_path):
         # 임베딩 모델 설정 (한국어 지원)
         embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
         
-        # 기존 ChromaDB 디렉토리가 있으면 삭제 (차원 불일치 해결)
-        import shutil
-        if os.path.exists("./chroma_db"):
-            shutil.rmtree("./chroma_db")
+        # 고유한 ChromaDB 디렉토리 사용 (충돌 방지)
+        import time
+        import uuid
+        
+        # 타임스탬프와 랜덤 ID로 고유한 디렉토리명 생성
+        chroma_dir = f"./chroma_db_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        
+        # 기존 chroma_db 폴더가 있다면 이름 변경으로 처리
+        old_chroma_dir = "./chroma_db"
+        if os.path.exists(old_chroma_dir):
+            try:
+                # 이름 변경 (삭제보다 안전)
+                temp_name = f"./chroma_db_old_{uuid.uuid4().hex[:8]}"
+                os.rename(old_chroma_dir, temp_name)
+                print(f"기존 ChromaDB 디렉토리 이름 변경: {old_chroma_dir} -> {temp_name}")
+            except Exception as e:
+                print(f"기존 ChromaDB 디렉토리 이름 변경 실패: {str(e)}")
 
-        # ChromaDB 벡터 저장소 생성
+        # 새로운 ChromaDB 벡터 저장소 생성
         vectorstore = Chroma.from_documents(
             documents=splits,
             embedding=embeddings,
-            persist_directory="./chroma_db"
+            persist_directory=chroma_dir
         )
         
         return vectorstore
@@ -209,6 +342,21 @@ if uploaded_file:
                     st.success("✅ 문서가 성공적으로 분석되었습니다!")
                 else:
                     st.error("❌ 문서 분석에 실패했습니다.")
+else:
+    # 파일이 삭제된 경우 처리
+    if st.session_state.current_file is not None:
+        # 안전한 ChromaDB 폴더 삭제
+        with st.spinner("🗑️ 기존 문서 데이터를 정리하고 있습니다..."):
+            success = safe_delete_chromadb()
+            if success:
+                st.info("🗑️ 기존 문서 데이터가 정리되었습니다.")
+            else:
+                st.warning("⚠️ 데이터 정리가 지연되었습니다. 다음 앱 재시작 시 자동으로 정리됩니다.")
+        
+        # 세션 상태 초기화
+        st.session_state.current_file = None
+        st.session_state.vectorstore = None
+        st.session_state.messages = []
 
 # 파일이 업로드되지 않았을 때 안내
 if not uploaded_file:
