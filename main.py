@@ -28,6 +28,10 @@ from langchain.schema import LLMResult
 from typing import Dict, List, Any
 import time
 
+from streamlit_extras.buy_me_a_coffee import button
+
+button(username="ehtjd33e", floating=True, width=221)
+
 # .env 파일 로드
 load_dotenv()
 
