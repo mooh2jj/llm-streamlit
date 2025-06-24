@@ -9,4 +9,5 @@ langchain-openai
 sentence-transformers
 openai 
 python-dotenv
-protobuf==3.20.3
+protobuf>=5.27.3
+streamlit-extras
