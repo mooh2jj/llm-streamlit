@@ -9,5 +9,5 @@ langchain-openai
 sentence-transformers
 openai 
 python-dotenv
-protobuf>=5.27.3
-streamlit-extras
+protobuf==3.20.3
+#streamlit-extras # 버전 충돌 문제로 주석 처리
