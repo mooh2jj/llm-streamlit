@@ -37,14 +37,43 @@ import glob
 import gc
 from pathlib import Path
 
-from streamlit_extras.buy_me_a_coffee import button
+# from streamlit_extras.buy_me_a_coffee import button
 
-button(username="ehtjd33e", floating=True, width=221)
+# 수동으로 Buy Me a Coffee 버튼 구현
+def add_buy_me_coffee_button():
+    st.markdown(
+        """
+        <style>
+        .coffee-button {
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        .coffee-button img {
+            height: 40px !important;
+            width: 144px !important;
+            max-height: 40px !important;
+            max-width: 144px !important;
+            object-fit: contain !important;
+            border: none !important;
+        }
+        </style>
+        <div class="coffee-button">
+            <a href="https://www.buymeacoffee.com/ehtjd33e" target="_blank">
+                <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
+                     alt="Buy Me A Coffee">
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # .env 파일 로드
 load_dotenv()
 
 st.set_page_config(page_title="법률가 챗봇", page_icon=":books:", layout="wide")
+
+# 버튼 추가 (제목 바로 위)
+add_buy_me_coffee_button()
 
 st.title("📚 법률가 챗봇")
 st.caption("PDF 문서를 업로드하여 법률 관련 질문에 답변받으세요")
