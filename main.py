@@ -1,17 +1,20 @@
 import os
+import platform
+import sys
+
 # protobuf 호환성을 위한 환경변수 설정 (다른 모든 import보다 먼저!)
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
+# sqlite3 패치 (배포 환경 고려)
 try:
     __import__('pysqlite3')
-    import sys
     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
     print("<<<<< sqlite3 patched with pysqlite3 >>>>>")
 except ImportError:
-    # pysqlite3가 없으면 기본 sqlite3 사용
+    # pysqlite3가 없으면 기본 sqlite3 사용 (로컬 환경에서는 정상)
     print("<<<<< using default sqlite3 >>>>>")
 
-print("<<<<< app.app.py IS BEING LOADED (sqlite3 patched with pysqlite3) >>>>>") # 패치 내용 명시
+print(f"<<<<< app.py IS BEING LOADED on {platform.system()} >>>>>")
 
 import streamlit as st
 import tempfile
@@ -29,6 +32,10 @@ from typing import Dict, List, Any
 import time
 import uuid
 import subprocess
+import shutil
+import glob
+import gc
+from pathlib import Path
 
 from streamlit_extras.buy_me_a_coffee import button
 
@@ -44,6 +51,24 @@ st.caption("PDF 문서를 업로드하여 법률 관련 질문에 답변받으�
 
 # OpenAI API 키 로드
 openai_api_key = os.getenv("OPENAI_API_KEY")
+
+# OS 감지 및 플랫폼별 설정
+SYSTEM_OS = platform.system().lower()
+IS_WINDOWS = SYSTEM_OS == 'windows'
+IS_LINUX = SYSTEM_OS == 'linux'
+IS_MACOS = SYSTEM_OS == 'darwin'
+
+# 배포 환경 감지 (Streamlit Cloud, Heroku 등)
+IS_DEPLOYMENT = any([
+    os.getenv('STREAMLIT_CLOUD'),
+    os.getenv('HEROKU'),
+    os.getenv('RAILWAY'),
+    os.getenv('RENDER'),
+    '/app' in os.getcwd(),  # 일반적인 컨테이너 경로
+    '/home/appuser' in os.getcwd()  # Streamlit Cloud 경로
+])
+
+print(f"시스템 정보: OS={SYSTEM_OS}, 배포환경={IS_DEPLOYMENT}")
 
 # 스트리밍을 위한 콜백 핸들러
 class StreamlitCallbackHandler(BaseCallbackHandler):
@@ -83,132 +108,164 @@ with st.sidebar:
         st.success(f"✅ 파일 업로드됨: {uploaded_file.name}")
         st.info(f"📄 파일 크기: {uploaded_file.size / 1024:.1f} KB")
 
-# 안전한 ChromaDB 삭제 함수 (개선된 버전)
-def safe_delete_chromadb(max_retries=3, delay=1):
-    """ChromaDB 폴더를 안전하게 삭제합니다."""
-    import shutil
-    import time
-    import gc
+# 크로스 플랫폼 호환 ChromaDB 삭제 함수
+def safe_delete_chromadb_cross_platform(target_dir, max_retries=3, delay=1):
+    """모든 OS에서 안전하게 ChromaDB 폴더를 삭제합니다."""
     
     # 먼저 vectorstore 객체 해제 및 가비지 컬렉션 강제 실행
     if 'vectorstore' in st.session_state:
         st.session_state.vectorstore = None
-    gc.collect()  # 가비지 컬렉션 강제 실행
+    gc.collect()
     
-    chroma_dir = "./chroma_db"
-    if not os.path.exists(chroma_dir):
+    if not os.path.exists(target_dir):
         return True
     
-    # 먼저 이름 변경 시도 (Windows에서 더 안전함)
-    temp_name = f"./chroma_db_deleted_{uuid.uuid4().hex[:8]}"
+    # Path 객체 사용으로 크로스 플랫폼 호환성 개선
+    target_path = Path(target_dir)
+    temp_name = f"{target_dir}_deleted_{uuid.uuid4().hex[:8]}"
+    temp_path = Path(temp_name)
     
     try:
-        # 폴더 이름 변경 (일반적으로 삭제보다 빠름)
-        os.rename(chroma_dir, temp_name)
-        print(f"ChromaDB 디렉토리 이름 변경: {chroma_dir} -> {temp_name}")
+        # 1단계: 폴더 이름 변경 (모든 OS에서 안전)
+        target_path.rename(temp_path)
+        print(f"ChromaDB 디렉토리 이름 변경: {target_dir} -> {temp_name}")
         
-        # 이름 변경 후 삭제 시도
+        # 2단계: 플랫폼별 삭제 전략
+        success = False
+        
         for attempt in range(max_retries):
             try:
                 time.sleep(delay)
-                shutil.rmtree(temp_name)
-                print(f"ChromaDB 디렉토리 삭제 성공: {temp_name}")
-                return True
+                
+                if IS_WINDOWS and not IS_DEPLOYMENT:
+                    # Windows 로컬 환경: 강화된 삭제 방법
+                    success = _windows_force_delete(temp_path)
+                else:
+                    # Linux/macOS 또는 배포 환경: 표준 방법
+                    success = _standard_delete(temp_path)
+                
+                if success:
+                    print(f"ChromaDB 디렉토리 삭제 성공: {temp_name}")
+                    return True
+                    
             except Exception as e:
                 print(f"삭제 시도 {attempt + 1}/{max_retries} 실패: {str(e)}")
                 if attempt < max_retries - 1:
                     delay *= 2
         
-        # 삭제 실패 시 나중에 정리하도록 남겨둠
+        # 삭제 실패 시에도 이름 변경은 성공했으므로 True 반환
         print(f"ChromaDB 디렉토리 삭제 실패, 나중에 정리됨: {temp_name}")
-        return True  # 이름 변경은 성공했으므로 True 반환
+        return True
         
     except Exception as e:
-        print(f"ChromaDB 디렉토리 이름 변경 실패: {str(e)}")
+        print(f"ChromaDB 디렉토리 처리 실패: {str(e)}")
         return False
 
-# ChromaDB 정리 함수 (개선된 버전)
-def cleanup_chromadb():
-    """기존 ChromaDB 폴더들을 정리합니다."""
-    import glob
-    import shutil
-    import time
+def _windows_force_delete(path):
+    """Windows에서 강화된 삭제 방법"""
+    try:
+        # 방법 1: 표준 shutil 삭제
+        shutil.rmtree(path)
+        return True
+    except Exception:
+        pass
     
-    # 모든 ChromaDB 관련 폴더 찾기 (삭제 예정 폴더 포함)
-    chroma_dirs = glob.glob("./chroma_db*")
+    try:
+        # 방법 2: Windows 전용 robocopy 사용 (robocopy가 있는 경우에만)
+        if shutil.which("robocopy"):
+            empty_dir = Path("./temp_empty_dir")
+            empty_dir.mkdir(exist_ok=True)
+            
+            # robocopy로 빈 폴더를 미러링하여 삭제 효과
+            result = subprocess.run([
+                "robocopy", str(empty_dir), str(path), "/MIR", "/NFL", "/NDL", "/NJH", "/NJS"
+            ], capture_output=True, text=True)
+            
+            # 빈 폴더들 정리
+            empty_dir.rmdir()
+            path.rmdir()
+            return True
+    except Exception:
+        pass
     
-    for dir_path in chroma_dirs:
-        try:
-            # 약간의 지연 후 삭제
-            time.sleep(0.5)
-            shutil.rmtree(dir_path)
-            print(f"정리됨: {dir_path}")
-        except Exception as e:
-            print(f"정리 중 오류 ({dir_path}): {str(e)}")
-            # 삭제 실패한 폴더는 다음에 다시 시도
+    try:
+        # 방법 3: 파일별 개별 삭제
+        for root, dirs, files in os.walk(path, topdown=False):
+            for file in files:
+                os.chmod(os.path.join(root, file), 0o777)
+                os.remove(os.path.join(root, file))
+            for dir in dirs:
+                os.rmdir(os.path.join(root, dir))
+        os.rmdir(path)
+        return True
+    except Exception:
+        pass
+    
+    return False
 
-# 강제 ChromaDB 정리 함수 (Windows 전용)
-def force_cleanup_chromadb():
-    """Windows에서 ChromaDB를 강제로 정리합니다."""
-    import subprocess
-    import glob
-    import time
-    
-    chroma_dirs = glob.glob("./chroma_db*")
-    
-    for dir_path in chroma_dirs:
-        try:
-            # Windows의 경우 핸들을 가진 프로세스 확인 및 정리 시도
-            if os.name == 'nt':  # Windows
-                try:
-                    # robocopy를 사용한 빈 폴더로 덮어쓰기 (Windows 전용 트릭)
-                    empty_dir = "./temp_empty_dir"
-                    os.makedirs(empty_dir, exist_ok=True)
-                    
-                    # robocopy로 빈 폴더 내용을 대상 폴더에 미러링 (효과적으로 삭제)
-                    subprocess.run([
-                        "robocopy", empty_dir, dir_path, "/MIR", "/NFL", "/NDL", "/NJH", "/NJS"
-                    ], capture_output=True, check=False)
-                    
-                    # 빈 폴더들 삭제
-                    os.rmdir(empty_dir)
-                    os.rmdir(dir_path)
-                    print(f"강제 정리 성공: {dir_path}")
-                    
-                except Exception as e:
-                    print(f"강제 정리 실패 ({dir_path}): {str(e)}")
-            else:
-                # Unix 계열 시스템에서는 일반 삭제
-                import shutil
-                shutil.rmtree(dir_path)
-                print(f"정리됨: {dir_path}")
-                
-        except Exception as e:
-            print(f"정리 중 오류 ({dir_path}): {str(e)}")
+def _standard_delete(path):
+    """표준 삭제 방법 (Linux/macOS/배포환경)"""
+    try:
+        shutil.rmtree(path)
+        return True
+    except Exception as e:
+        print(f"표준 삭제 실패: {str(e)}")
+        return False
 
-# 앱 시작 시 ChromaDB 정리 (세션 상태 초기화 전에)
+# 전체 ChromaDB 정리 함수 (크로스 플랫폼)
+def cleanup_all_chromadb():
+    """모든 ChromaDB 관련 폴더를 정리합니다."""
+    try:
+        # 현재 디렉토리에서 ChromaDB 관련 폴더 찾기
+        current_dir = Path.cwd()
+        chroma_patterns = ["chroma_db*", ".chromadb*"]
+        
+        cleaned_count = 0
+        for pattern in chroma_patterns:
+            for chroma_path in current_dir.glob(pattern):
+                if chroma_path.is_dir():
+                    try:
+                        success = safe_delete_chromadb_cross_platform(str(chroma_path))
+                        if success:
+                            cleaned_count += 1
+                            print(f"정리됨: {chroma_path}")
+                    except Exception as e:
+                        print(f"정리 중 오류 ({chroma_path}): {str(e)}")
+        
+        if cleaned_count > 0:
+            print(f"총 {cleaned_count}개의 ChromaDB 폴더가 정리되었습니다.")
+        
+        return True
+    except Exception as e:
+        print(f"ChromaDB 전체 정리 중 오류: {str(e)}")
+        return False
+
+# 안전한 ChromaDB 삭제 함수 (기본 호환)
+def safe_delete_chromadb(max_retries=3, delay=1):
+    """ChromaDB 폴더를 안전하게 삭제합니다."""
+    return safe_delete_chromadb_cross_platform("./chroma_db", max_retries, delay)
+
+# 앱 시작 시 ChromaDB 정리 (개선된 버전)
 if 'app_initialized' not in st.session_state:
-    # 일반 정리 시도
-    cleanup_chromadb()
+    print(f"앱 초기화 시작 - OS: {SYSTEM_OS}, 배포환경: {IS_DEPLOYMENT}")
     
-    # Windows에서 여전히 남아있는 폴더가 있다면 강제 정리 시도
-    if os.name == 'nt':  # Windows
-        import glob
-        remaining_dirs = glob.glob("./chroma_db*")
-        if remaining_dirs:
-            print("Windows에서 강제 정리 시도...")
-            force_cleanup_chromadb()
+    # 전체 ChromaDB 폴더 정리
+    cleanup_all_chromadb()
     
     st.session_state.app_initialized = True
+    print("앱 초기화 완료")
 
-# RAG 시스템 초기화 (더욱 개선된 버전)
+# RAG 시스템 초기화 (크로스 플랫폼 개선 버전)
 @st.cache_resource
 def initialize_rag_system(file_path):
     """RAG 시스템을 초기화합니다."""
     try:
+        print(f"RAG 시스템 초기화 시작: {file_path}")
+        
         # PDF 문서 로딩
         loader = PyPDFLoader(file_path)
         documents = loader.load()
+        print(f"문서 로딩 완료: {len(documents)}개 페이지")
         
         # 텍스트 분할
         text_splitter = RecursiveCharacterTextSplitter(
@@ -216,27 +273,26 @@ def initialize_rag_system(file_path):
             chunk_overlap=200
         )
         splits = text_splitter.split_documents(documents)
+        print(f"텍스트 분할 완료: {len(splits)}개 청크")
         
         # 임베딩 모델 설정 (한국어 지원)
         embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
         
         # 고유한 ChromaDB 디렉토리 사용 (충돌 방지)
-        import time
-        import uuid
+        timestamp = int(time.time())
+        random_id = uuid.uuid4().hex[:8]
+        chroma_dir = f"./chroma_db_{timestamp}_{random_id}"
         
-        # 타임스탬프와 랜덤 ID로 고유한 디렉토리명 생성
-        chroma_dir = f"./chroma_db_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        print(f"새 ChromaDB 디렉토리: {chroma_dir}")
         
-        # 기존 chroma_db 폴더가 있다면 이름 변경으로 처리
+        # 기존 chroma_db 폴더가 있다면 정리
         old_chroma_dir = "./chroma_db"
         if os.path.exists(old_chroma_dir):
             try:
-                # 이름 변경 (삭제보다 안전)
-                temp_name = f"./chroma_db_old_{uuid.uuid4().hex[:8]}"
-                os.rename(old_chroma_dir, temp_name)
-                print(f"기존 ChromaDB 디렉토리 이름 변경: {old_chroma_dir} -> {temp_name}")
+                safe_delete_chromadb_cross_platform(old_chroma_dir)
+                print(f"기존 ChromaDB 디렉토리 정리됨: {old_chroma_dir}")
             except Exception as e:
-                print(f"기존 ChromaDB 디렉토리 이름 변경 실패: {str(e)}")
+                print(f"기존 ChromaDB 디렉토리 정리 실패: {str(e)}")
 
         # 새로운 ChromaDB 벡터 저장소 생성
         vectorstore = Chroma.from_documents(
@@ -245,20 +301,31 @@ def initialize_rag_system(file_path):
             persist_directory=chroma_dir
         )
         
+        print("RAG 시스템 초기화 완료")
         return vectorstore
+        
     except Exception as e:
-        st.error(f"RAG 시스템 초기화 중 오류 발생: {str(e)}")
+        error_msg = f"RAG 시스템 초기화 중 오류 발생: {str(e)}"
+        print(error_msg)
+        st.error(error_msg)
         return None
 
-# 업로드된 파일을 임시 파일로 저장
+# 업로드된 파일을 임시 파일로 저장 (크로스 플랫폼)
 def save_uploaded_file(uploaded_file):
     """업로드된 파일을 임시 파일로 저장하고 경로를 반환합니다."""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        # 크로스 플랫폼 임시 파일 생성
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", prefix="uploaded_") as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
-            return tmp_file.name
+            temp_path = tmp_file.name
+        
+        print(f"임시 파일 생성: {temp_path}")
+        return temp_path
+        
     except Exception as e:
-        st.error(f"파일 저장 중 오류 발생: {str(e)}")
+        error_msg = f"파일 저장 중 오류 발생: {str(e)}"
+        print(error_msg)
+        st.error(error_msg)
         return None
 
 # RAG 질의응답 함수 (스트리밍 버전)
@@ -309,6 +376,7 @@ def get_rag_response_streaming(question, vectorstore, api_key, container):
         
     except Exception as e:
         error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+        print(error_msg)
         container.error(error_msg)
         return error_msg
 
@@ -335,8 +403,13 @@ if uploaded_file:
             temp_file_path = save_uploaded_file(uploaded_file)
             if temp_file_path:
                 st.session_state.vectorstore = initialize_rag_system(temp_file_path)
-                # 임시 파일 정리
-                os.unlink(temp_file_path)
+                
+                # 임시 파일 정리 (크로스 플랫폼)
+                try:
+                    os.unlink(temp_file_path)
+                    print(f"임시 파일 정리됨: {temp_file_path}")
+                except Exception as e:
+                    print(f"임시 파일 정리 실패: {str(e)}")
                 
                 if st.session_state.vectorstore:
                     st.success("✅ 문서가 성공적으로 분석되었습니다!")
@@ -347,7 +420,7 @@ else:
     if st.session_state.current_file is not None:
         # 안전한 ChromaDB 폴더 삭제
         with st.spinner("🗑️ 기존 문서 데이터를 정리하고 있습니다..."):
-            success = safe_delete_chromadb()
+            success = cleanup_all_chromadb()
             if success:
                 st.info("🗑️ 기존 문서 데이터가 정리되었습니다.")
             else:
@@ -411,6 +484,7 @@ if uploaded_file:
     with st.expander("💡 사용 팁"):
         st.markdown(f"""
         **현재 분석 중인 파일: {uploaded_file.name}**
+        **시스템 환경: {SYSTEM_OS.title()}** {'(배포환경)' if IS_DEPLOYMENT else '(로컬환경)'}
         
         **이 챗봇은 어떻게 작동하나요?**
         - 📄 업로드된 PDF 문서의 내용을 기반으로 답변합니다
@@ -425,6 +499,11 @@ if uploaded_file:
 
     # 디버깅용 (개발 환경에서만)
     if st.checkbox("🔧 디버그 모드"):
-        st.json({"메시지 개수": len(st.session_state.messages)})
+        st.json({
+            "메시지 개수": len(st.session_state.messages),
+            "OS": SYSTEM_OS,
+            "배포환경": IS_DEPLOYMENT,
+            "Python 버전": sys.version
+        })
         with st.expander("전체 대화 내역"):
             st.json(st.session_state.messages)
